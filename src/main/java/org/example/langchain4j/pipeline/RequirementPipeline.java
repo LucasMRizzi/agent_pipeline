@@ -1,13 +1,11 @@
 package org.example.langchain4j.pipeline;
 
 import dev.langchain4j.data.segment.TextSegment;
-import org.example.langchain4j.agent.AnalysisConsolidator;
-import org.example.langchain4j.agent.RequirementsAnalyzer;
-import org.example.langchain4j.agent.RequirementsRewriter;
-import org.example.langchain4j.agent.UmlDiagram;
+import org.example.langchain4j.agent.*;
 import org.example.langchain4j.chunk.Chunker;
 import org.example.langchain4j.chunk.Chunk;
 import org.example.langchain4j.chunk.RequirementChunker;
+import org.example.langchain4j.rag.PlantUcdPatternRetriever;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,25 +17,40 @@ public class RequirementPipeline {
     private final RequirementsAnalyzer analyzerAgent;
     private final AnalysisConsolidator consolidatorAgent;
     private final RequirementsRewriter rewriterAgent;
+    private final RequirementTranslator translatorAgent;
     private final UmlDiagram diagramAgent;
+
+    private final PlantUcdPatternRetriever plantUcdPatternRetriever;
 
     public RequirementPipeline(
             RequirementsAnalyzer analyzerAgent,
             AnalysisConsolidator consolidatorAgent,
             RequirementsRewriter rewriterAgent,
-            UmlDiagram diagramAgent) {
+            RequirementTranslator translatorAgent,
+            UmlDiagram diagramAgent,
+            PlantUcdPatternRetriever plantUcdPatternRetriever) {
 
         this.analyzerAgent = analyzerAgent;
         this.consolidatorAgent = consolidatorAgent;
         this.rewriterAgent = rewriterAgent;
+        this.translatorAgent = translatorAgent;
         this.diagramAgent = diagramAgent;
+        this.plantUcdPatternRetriever = plantUcdPatternRetriever;
     }
 
     public PipelineResult execute(TextSegment requirements) {
 
         List<Chunk> chunks = chunker.split(requirements.text());
 
-        // Agente 1
+        /**
+         * Agente 01 - Análise de Requisitos
+         *
+         * Input -> Documento de Requisitos original
+         *
+         * Process -> Chunking do documento original e análises individuais por conjunto de requisitos
+         *
+         * Output -> Lista de análises dos problemas identificados
+         * */
         System.out.println("\n\n-------------------------------------------");
         System.out.println("Etapa 1 -> Análise de Requisitos");
         System.out.println("-------------------------------------------\n");
@@ -57,12 +70,29 @@ public class RequirementPipeline {
             analyses.add(result);
         }
 
+        /**
+         * Agente 02 - Consolidação da análise
+         *
+         * Input -> Lista de análises dos problemas identificados
+         *
+         * Output -> String com a consolidação de todas as análises
+         *
+         * ~ Evita análises duplicadas para o mesmo trecho de requisitos
+         * */
         System.out.println("\n\n-------------------------------------------");
         System.out.println("Etapa 2 -> Consolidação da análise");
         System.out.println("-------------------------------------------\n\n");
         String consolidatedAnalysis = consolidatorAgent.execute(analyses);
 
-        // Agente 2
+        /**
+         * Agente 03 - Reescrita de requisitos
+         *
+         * Input -> Documento de requisitos original
+         *       -> Lista de análises dos problemas identificados
+         *
+         * Output -> String com a reescrita do documento
+         *
+         * */
         System.out.println("\n\n-------------------------------------------");
         System.out.println("Etapa 3 -> Reescrita de Requisitos");
         System.out.println("-------------------------------------------\n\n");
@@ -71,18 +101,53 @@ public class RequirementPipeline {
 
         String rewritten = rewriterAgent.execute(input);
 
-        // Agente 3
+        /**
+         * Agente 04 - Tradução dos requisitos (Caso necessário)
+         *
+         * Input -> Documento de requisitos reescrito
+         *
+         * Output -> String com a reescrita do documento em inglês
+         *
+         * */
         System.out.println("\n\n-------------------------------------------");
-        System.out.println("Etapa 4 -> Criação do Diagrama");
+        System.out.println("Etapa 4 -> Tradução dos Requisitos");
         System.out.println("-------------------------------------------\n\n");
 
-        String diagram = diagramAgent.execute(rewritten);
+        String rewrittenEnglish = translatorAgent.execute(rewritten);
+
+        // Agente 3
+        System.out.println("\n\n-------------------------------------------");
+        System.out.println("Etapa 5 -> Recuperação de Padrões UML");
+        System.out.println("-------------------------------------------\n\n");
+
+        List<Chunk> chunksInEnglish = chunker.split(rewrittenEnglish);
+
+        String patterns = plantUcdPatternRetriever.retrievePatterns(chunksInEnglish);
+
+        /**
+         * Agente 05 - Geração do diagrama de classes UML
+         *
+         * Input -> Documento de requisitos reescrito em inglês
+         *       -> Padrões identificados (plantUCD)
+         *
+         * Output -> Código do diagrama PUML
+         *
+         * */
+        System.out.println("\n\n-------------------------------------------");
+        System.out.println("Etapa 6 -> Geração do Diagrama PUML");
+        System.out.println("-------------------------------------------\n\n");
+
+        UmlDiagram.Input inputUml = new UmlDiagram.Input(rewrittenEnglish, patterns);
+
+        String diagram = diagramAgent.execute(inputUml);
 
         return new PipelineResult(
                 requirements,
                 analyses,
                 consolidatedAnalysis,
                 rewritten,
+                rewrittenEnglish,
+                patterns,
                 diagram
         );
     }

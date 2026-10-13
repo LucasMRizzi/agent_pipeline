@@ -1,5 +1,6 @@
 package org.example.langchain4j.agent;
 
+import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.V;
@@ -7,14 +8,27 @@ import dev.langchain4j.service.V;
 public interface UmlDiagramAgent {
 
     @SystemMessage("""
-        Você é um arquiteto de software especialista em UML.
-        Com base na especificação completa de requisitos, gere o código de um Diagrama de Classes UML em formato PlantUML (@startuml ... @enduml).
+        You generate one complete and coherent PlantUML class diagram.
 
-        Diretrizes:
-        - Identifique as entidades principais, seus atributos (com tipos) e métodos principais.
-        - Defina os relacionamentos (associação, agregação, composição, herança) e multiplicidades.
-        - Retorne SOMENTE o bloco de código PlantUML.
+        The requirements are authoritative.
+        Retrieved patterns are examples only. Do not copy domain entities
+        that are not supported by the requirements.
+
+        Reuse class names consistently across the complete diagram.
+        Include attributes, methods, relationships and multiplicities only
+        when justified by the requirements.
+
+        Return only valid PlantUML enclosed by @startuml and @enduml.
         """)
-    @UserMessage("DOCUMENTO DE REQUISITOS COMPLETO:\n{{fullDocument}}")
-    String generatePlantUml(@V("fullDocument") String fullDocument);
+    @UserMessage("""
+        UPDATED REQUIREMENTS:
+        {{requirements}}
+
+        REFERENCE UML PATTERNS:
+        {{patterns}}
+        """)
+    String generatePlantUml(
+            @V("requirements") String requirements,
+            @V("patterns") String patterns
+    );
 }

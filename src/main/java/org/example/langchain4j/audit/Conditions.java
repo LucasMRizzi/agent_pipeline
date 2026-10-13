@@ -12,6 +12,7 @@ public record Conditions(
         String textModel,
         String codeModel,
         String embeddingModel,
+        String translateModel,
         Integer chunkSize,
         Integer ragMaxResults,
         String ragDescription

@@ -21,12 +21,11 @@ import org.example.langchain4j.embedding.Embedding;
 import org.example.langchain4j.embedding.EmbeddingFactory;
 import org.example.langchain4j.llm.LLM;
 import org.example.langchain4j.llm.LlmFactory;
+import org.example.langchain4j.llm.TranslateLLM;
+import org.example.langchain4j.llm.TranslateLlmFactory;
 import org.example.langchain4j.pipeline.PipelineResult;
 import org.example.langchain4j.pipeline.RequirementPipeline;
-import org.example.langchain4j.rag.RAG;
-import org.example.langchain4j.rag.RAGFactory;
-import org.example.langchain4j.rag.RAGFactoryGeneric;
-import org.example.langchain4j.rag.RAGFactoryRequirements;
+import org.example.langchain4j.rag.*;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -62,6 +61,9 @@ public class AgentRunner {
         System.out.println("\nEscolha o modelo de linguagem para códigos:");
         ChatModel codeModel = escolherLlm(scanner);
 
+        // -> LLM de Tradução
+        ChatModel translateModel = escolherTranslateModel(scanner);
+
         // ================================================
         // Iniciando RAG
         // ================================================
@@ -70,13 +72,19 @@ public class AgentRunner {
         List<Document> documentos = documentLoader.loadDocuments("./diagramas");
         List<Document> documentosReq = documentLoader.loadDocuments("./requisitos");
 
+        // Dataset PlantUCD: use somente o TRAIN
+        PlantUcdDocumentLoader plantUcdLoader = new PlantUcdDocumentLoader();
+        List<Document> documentosPlantUcd = plantUcdLoader.loadTrainDataset("./datasets/PlantUCD_dataset_train.jsonl");
+
         // -> Criando Banco de Vetores
         RAG reqRag = new RAGFactoryRequirements(500).create(embeddingModel);
         RAG umlRag = new RAGFactoryGeneric().create(embeddingModel);
+        RAG plantUcdRag = new RAGFactoryGeneric().create(embeddingModel);
 
         // -> Ingestão dos documentos
         umlRag.ingestor().ingest(documentos);
         reqRag.ingestor().ingest(documentosReq);
+        ingestInBatches(plantUcdRag, documentosPlantUcd);
 
         // ================================================
         // Iniciando Agentes
@@ -91,8 +99,13 @@ public class AgentRunner {
         // -> Agente de Reescrita de Requisitos
         RequirementsRewriter rewriterAgent = new RequirementsRewriter(textModel, reqRag.retriever());
 
+        // -> Agente de Tradução de Requisitos
+        RequirementTranslator translatorAgent = new RequirementTranslator(translateModel);
+
         // -> Agente de Criação de Diagrama UML
         UmlDiagram umlAgent = new UmlDiagram(codeModel, umlRag.retriever());
+
+        PlantUcdPatternRetriever patternRetriever = new PlantUcdPatternRetriever(plantUcdRag.retriever());
 
         // ================================================
         // Carregando Documento de Requisitos
@@ -105,7 +118,16 @@ public class AgentRunner {
         // ================================================
 
         // -> Cria o pipeline e salva os resultados
-        PipelineResult pipelineResult = new RequirementPipeline(analyzerAgent, consolidatorAgent, rewriterAgent, umlAgent).execute(documento.toTextSegment());
+        PipelineResult pipelineResult =
+                new RequirementPipeline(
+                        analyzerAgent,
+                        consolidatorAgent,
+                        rewriterAgent,
+                        translatorAgent,
+                        umlAgent,
+                        patternRetriever
+                )
+                        .execute(documento.toTextSegment());
 
         // ================================================
         // Gerando Auditáveis
@@ -116,6 +138,7 @@ public class AgentRunner {
                 textModel.defaultRequestParameters().modelName(),
                 codeModel.defaultRequestParameters().modelName(),
                 embeddingModel.modelName(),
+                translateModel.defaultRequestParameters().modelName(),
                 1000,
                 3,
                 "Rag utilizado nos agentes de analise, reescrita e uml"
@@ -159,6 +182,39 @@ public class AgentRunner {
         }
     }
 
+    private static ChatModel escolherTranslateModel(Scanner scanner) {
+        TranslateLLM[] modelos = TranslateLLM.values();
+
+        if (modelos.length == 0) {
+            throw new IllegalStateException("Nenhum modelo disponível.");
+        }
+
+        while (true) {
+            System.out.println("\nEscolha o modelo de tradução:");
+
+            for (int i = 0; i < modelos.length; i++) {
+                System.out.printf("%d - %s%n", i + 1, modelos[i].name());
+            }
+
+            System.out.print("Digite a opção: ");
+
+            try {
+                int opcao = Integer.parseInt(scanner.nextLine().trim());
+
+                if (opcao >= 1 && opcao <= modelos.length) {
+                    TranslateLLM escolhido = modelos[opcao - 1];
+
+                    System.out.println("Modelo selecionado: " + escolhido);
+                    return TranslateLlmFactory.create(escolhido);
+                }
+            } catch (NumberFormatException e) {
+                // A mensagem abaixo também cobre entradas não numéricas.
+            }
+
+            System.out.println("Opção inválida. Escolha um número do menu.");
+        }
+    }
+
     private static ChatModel escolherLlm(Scanner scanner) {
         LLM[] modelos = LLM.values();
 
@@ -188,6 +244,28 @@ public class AgentRunner {
             }
 
             System.out.println("Opção inválida. Escolha um número do menu.");
+        }
+    }
+
+    private static void ingestInBatches(
+            RAG rag,
+            List<Document> documents
+    ) {
+        final int batchSize = 64;
+
+        for (int start = 0; start < documents.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, documents.size());
+
+            List<Document> batch = documents.subList(start, end);
+
+            rag.ingestor().ingest(batch);
+
+            System.out.printf(
+                    "PlantUCD: documentos %d até %d de %d processados.%n",
+                    start + 1,
+                    end,
+                    documents.size()
+            );
         }
     }
 }

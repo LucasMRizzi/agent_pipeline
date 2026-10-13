@@ -79,6 +79,16 @@ public class PipelineAudit {
                 pipelineResult.diagram()
         );
 
+        write(
+                testDirectory.resolve("rewritten-english.txt"),
+                pipelineResult.rewrittenEnglish()
+        );
+
+        write(
+                testDirectory.resolve("patterns.txt"),
+                pipelineResult.identifiedPatterns()
+        );
+
         pdfDocumentWriter.write(
                 pipelineResult.rewritten(),
                 testDirectory.resolve("documento_modificado.pdf")

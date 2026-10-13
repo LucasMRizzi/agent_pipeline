@@ -9,6 +9,8 @@ public record PipelineResult(
         List<AnalysisResult> analyses,
         String consolidatedAnalysis,
         String rewritten,
+        String rewrittenEnglish,
+        String identifiedPatterns,
         String diagram
 )
 {

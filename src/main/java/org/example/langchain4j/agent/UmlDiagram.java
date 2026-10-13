@@ -4,9 +4,10 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import dev.langchain4j.service.AiServices;
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 
-public class UmlDiagram implements Agent<String, String> {
+public class UmlDiagram implements Agent<UmlDiagram.Input, String> {
+
+    public record Input(String fullDocument, String patterns) {}
 
     private final UmlDiagramAgent aiService;
 
@@ -26,7 +27,7 @@ public class UmlDiagram implements Agent<String, String> {
     }
 
     @Override
-    public String execute(String fullDocument) {
-        return aiService.generatePlantUml(fullDocument);
+    public String execute(Input input) {
+        return aiService.generatePlantUml(input.fullDocument, input.patterns);
     }
 }
