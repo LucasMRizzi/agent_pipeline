@@ -113,7 +113,21 @@ public class RequirementPipeline {
         System.out.println("Etapa 4 -> Tradução dos Requisitos");
         System.out.println("-------------------------------------------\n\n");
 
-        String rewrittenEnglish = translatorAgent.execute(rewritten);
+        List<Chunk> portugueseChunks = chunker.split(rewritten);
+
+        for(Chunk chunk : portugueseChunks){
+            System.out.println(chunk.text() + "\n\n\n");
+        }
+
+        List<String> englishChunks = portugueseChunks.stream()
+                .map(chunk -> translatorAgent.execute(chunk.text()))
+                .toList();
+
+        for(String text : englishChunks){
+            System.out.println(text + "\n\n\n");
+        }
+
+        String rewrittenEnglish = String.join("\n\n", englishChunks);
 
         // Agente 3
         System.out.println("\n\n-------------------------------------------");

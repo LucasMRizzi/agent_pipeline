@@ -23,7 +23,20 @@ public interface AnalysisConsolidatorAgent {
                 - preserve a identificação dos requisitos;
                 - não invente problemas que não estejam nas análises;
                 - organize a resposta de forma clara.
-
+                
+                Exemplo de Saída:
+                  **Requisitos**
+            
+                  **B. Requisitos Funcionais**
+                
+                  | **RF‑001 – "Título"** | "Descrição"
+                  | **RF‑002 ...
+                  
+                  **C.Requisitos não funcionais**
+                
+                  | **C‑001 – Título** | "Descrição
+                  | **C‑002 ...
+              
                 Análises individuais:
 
                 %s

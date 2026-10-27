@@ -79,7 +79,7 @@ public class AgentRunner {
         // -> Criando Banco de Vetores
         RAG reqRag = new RAGFactoryRequirements(500).create(embeddingModel);
         RAG umlRag = new RAGFactoryGeneric().create(embeddingModel);
-        RAG plantUcdRag = new RAGFactoryGeneric().create(embeddingModel);
+        RAG plantUcdRag = new RagFactoryPlantUCD().create(embeddingModel);
 
         // -> Ingestão dos documentos
         umlRag.ingestor().ingest(documentos);
@@ -103,7 +103,8 @@ public class AgentRunner {
         RequirementTranslator translatorAgent = new RequirementTranslator(translateModel);
 
         // -> Agente de Criação de Diagrama UML
-        UmlDiagram umlAgent = new UmlDiagram(codeModel, umlRag.retriever());
+        //UmlDiagram umlAgent = new UmlDiagram(codeModel, umlRag.retriever());
+        UmlDiagram umlAgent = new UmlDiagram(codeModel);
 
         PlantUcdPatternRetriever patternRetriever = new PlantUcdPatternRetriever(plantUcdRag.retriever());
 
