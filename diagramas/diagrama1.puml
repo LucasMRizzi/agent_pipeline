@@ -1,0 +1,126 @@
+@startuml
+title Diagrama de classes PARKEZ
+
+abstract class Pessoa {
+    -string: nome
+    -Contato: contato
+    -string: senhaHash
+    +login() : bool
+}
+
+class Usuário {
+    -List<TokenEstacionamento>: tokens
+    +recuperarSenha()
+    +alterarSenha(novaSenha)
+}
+
+class Guarda {
+    -List<Multa>: multas
+    -Localização: localizaçãoAtual
+}
+
+class Email {
+    -string: Email
+    +Email()
+    -confirmarEmail()
+}
+
+class Celular {
+    -string: Celular
+    +Celular()
+    -confirmarCelular()
+}
+
+class Vaga {
+    -StatusVaga: status
+    -DateTime: ultimaAtualização
+    -List<TokenEstacionamento>: tokens
+    -Localização: localização
+}
+
+enum StatusVaga {
+    OCUPADA
+    LIVRE
+    TEMPO_EXCEDIDO
+}
+
+class TokenEstacionamento {
+    -string: numeroDaVaga
+    -DateTime: horárioDeEntrada
+    -DateTime: tempoDePermanência
+    -StatusToken: status
+    -Deslocamento: deslocamento
+    -Vaga: vaga
+    -Pagamento: pagamento
+    -Multa: multa
+}
+
+enum StatusToken {
+    ATIVO
+    ENCERRADO
+    FISCALIZAÇÃO
+    MULTADO
+}
+
+abstract class Pagamento {
+    -double: valor
+    -DateTime: dataHora
+    -bool: aprovado
+}
+
+class PagamentoPIX {
+    -String: código
+    -DateTime: tempoExpiração
+}
+
+class PagamentoCartão {
+    -string: tokenCartao
+}
+
+class Multa {
+    -double: valor
+    -DateTime: dataHora
+    -String: fotoUrl
+    -String: motivo
+    +calcularValor(): double
+}
+
+class Localização {
+    -double: latitude
+    -double: longitude
+    -String: endereco
+}
+
+class Deslocamento {
+    -DateTime: dataHora
+    -Localização: localizaçãoInicial
+    -Localização: localizaçãoFinal
+    -TokenEstacionamento: estacionamento
+}
+
+' Relacionamentos
+Pessoa <|-- Usuário
+Pessoa <|-- Guarda
+Pessoa <|-- Administrador
+Pessoa --> Email
+Pessoa --> Celular
+
+Usuário "1" <--> "0..*" TokenEstacionamento
+Vaga "1" <-right-> "0..*" TokenEstacionamento
+
+TokenEstacionamento ..> StatusToken
+Vaga ..> StatusVaga
+
+TokenEstacionamento *-left- "0..1" Multa
+TokenEstacionamento *-- Pagamento
+
+Pagamento <|-- PagamentoCartão
+Pagamento <|-- PagamentoPIX
+Vaga o--> Localização
+Guarda o--> Localização
+Deslocamento o--> Localização
+
+Guarda "1" --> "0..*" Multa
+TokenEstacionamento "1" <--> "1" Deslocamento
+
+@enduml

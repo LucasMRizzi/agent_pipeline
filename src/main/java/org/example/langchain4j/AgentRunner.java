@@ -1,142 +1,272 @@
 package org.example.langchain4j;
 
 import dev.langchain4j.data.document.Document;
+import dev.langchain4j.data.document.DocumentSplitter;
+import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
+import dev.langchain4j.data.document.loader.UrlDocumentLoader;
+import dev.langchain4j.data.document.parser.apache.tika.ApacheTikaDocumentParser;
+import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
+import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
+import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
+import org.example.langchain4j.agent.*;
+import org.example.langchain4j.audit.Conditions;
+import org.example.langchain4j.document.DocumentLoader;
+import org.example.langchain4j.document.PdfDocumentWriter;
+import org.example.langchain4j.audit.PipelineAudit;
+import org.example.langchain4j.embedding.Embedding;
+import org.example.langchain4j.embedding.EmbeddingFactory;
+import org.example.langchain4j.llm.LLM;
+import org.example.langchain4j.llm.LlmFactory;
+import org.example.langchain4j.llm.TranslateLLM;
+import org.example.langchain4j.llm.TranslateLlmFactory;
+import org.example.langchain4j.pipeline.PipelineResult;
+import org.example.langchain4j.pipeline.RequirementPipeline;
+import org.example.langchain4j.rag.*;
 
-import java.util.ArrayList;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Scanner;
 
 
 public class AgentRunner {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
 
-        String apiKey = System.getenv("NVIDIA_API_KEY");
+        // ================================================
+        // Iniciando Ferramentas
+        // ================================================
 
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new RuntimeException("NVIDIA_API_KEY não foi encontrada.");
-        }
+        // -> Carrega Documentos
+        DocumentLoader documentLoader = new DocumentLoader();
 
-        OpenAiChatModel model = OpenAiChatModel.builder()
-                .baseUrl("https://integrate.api.nvidia.com/v1")
-                .apiKey(apiKey)
-                .modelName("meta/llama-3.2-11b-vision-instruct")
-                .build();
+        // -> Scanner
+        Scanner scanner = new Scanner(System.in);
 
-        DocumentHandler documentHandler = new DocumentHandler();
+        // ================================================
+        // Escolhendo Modelos
+        // ================================================
 
-        Document documento = documentHandler.loadDocument("requisitos.pdf");
-        System.out.println("Documento processado.");
-        List<TextSegment> chunks = documentHandler.documentChunking(documento);
-        System.out.println("Documento dividido em chunks.");
+        // -> Modelo de Embedding
+        EmbeddingModel embeddingModel = escolherEmbeddingModel(scanner);
 
+        // -> LLMs
+        System.out.println("\nEscolha o modelo de linguagem para textos:");
+        ChatModel textModel = escolherLlm(scanner);
 
-        // Agente 1 - Análise de requisitos
+        System.out.println("\nEscolha o modelo de linguagem para códigos:");
+        ChatModel codeModel = escolherLlm(scanner);
 
-        List<String> analises = new ArrayList<>();
-        System.out.println("\nIniciando etapa 1: Análise de requisitos\n");
+        // -> LLM de Tradução
+        ChatModel translateModel = escolherTranslateModel(scanner);
 
-        for (int i = 0; i < chunks.size(); i++) {
-            TextSegment chunk = chunks.get(i);
+        // ================================================
+        // Iniciando RAG
+        // ================================================
 
-            String promptAnalise = """
-                Você é um engenheiro de requisitos.
+        // -> Carregando documentos da RAG
+        List<Document> documentos = documentLoader.loadDocuments("./diagramas");
+        List<Document> documentosReq = documentLoader.loadDocuments("./requisitos");
 
-                Analise o trecho abaixo.
+        // Dataset PlantUCD: use somente o TRAIN
+        PlantUcdDocumentLoader plantUcdLoader = new PlantUcdDocumentLoader();
+        List<Document> documentosPlantUcd = plantUcdLoader.loadTrainDataset("./datasets/PlantUCD_dataset_train.jsonl");
 
-                Identifique:
-                - ambiguidades;
-                - incompletudes;
-                - inconsistências;
-                - problemas de verificabilidade.
+        // -> Criando Banco de Vetores
+        RAG reqRag = new RAGFactoryRequirements(500).create(embeddingModel);
+        RAG umlRag = new RAGFactoryGeneric().create(embeddingModel);
+        RAG plantUcdRag = new RagFactoryPlantUCD().create(embeddingModel);
 
-                Para cada problema, proponha uma correção.
+        // -> Ingestão dos documentos
+        umlRag.ingestor().ingest(documentos);
+        reqRag.ingestor().ingest(documentosReq);
+        ingestInBatches(plantUcdRag, documentosPlantUcd);
 
-                Retorne somente o resultado da análise.
+        // ================================================
+        // Iniciando Agentes
+        // ================================================
 
-                TRECHO:
-                %s
-                """.formatted(chunk.text());
+        // -> Agente de Análise de Requisitos
+        RequirementsAnalyzer analyzerAgent = new RequirementsAnalyzer(textModel, reqRag.retriever());
 
-            try {
-                String analise = model.chat(promptAnalise);
-                analises.add(analise);
-                System.out.printf(">>> Chunk %d/%d analisado com sucesso.%n", (i + 1), chunks.size());
-            } catch (Exception e) {
-                System.err.printf("Erro ao analisar chunk %d: %s%n", (i + 1), e.getMessage());
-                analises.add("Nenhuma alteração proposta (falha na análise do modelo).");
-            }
-        }
+        // -> Agente de Consolidação de Análise de Requisitos
+        AnalysisConsolidator consolidatorAgent = new AnalysisConsolidator(textModel);
 
-        if (analises.size() != chunks.size()) {
-            throw new IllegalStateException(
-                    String.format("Divergência: %d chunks para %d análises.", chunks.size(), analises.size())
-            );
-        }
+        // -> Agente de Reescrita de Requisitos
+        RequirementsRewriter rewriterAgent = new RequirementsRewriter(textModel, reqRag.retriever());
 
-        System.out.println(analises);
+        // -> Agente de Tradução de Requisitos
+        RequirementTranslator translatorAgent = new RequirementTranslator(translateModel);
 
-        // Agente 2 - Correção requisitos
+        // -> Agente de Criação de Diagrama UML
+        //UmlDiagram umlAgent = new UmlDiagram(codeModel, umlRag.retriever());
+        UmlDiagram umlAgent = new UmlDiagram(codeModel);
 
-        List<String> chunksCorrigidos = new ArrayList<>();
-        System.out.println("\nIniciando Etapa 2: Atualização do Texto\n");
+        PlantUcdPatternRetriever patternRetriever = new PlantUcdPatternRetriever(plantUcdRag.retriever());
 
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunkOriginal = chunks.get(i).text();
-            String analiseCorrespondente = analises.get(i);
+        // ================================================
+        // Carregando Documento de Requisitos
+        // ================================================
 
-            String promptReescrita = """
-                Você é um especialista em documentação de software.
-                Sua tarefa é reescrever o TRECHO ORIGINAL de requisitos aplicando as correções sugeridas na ANÁLISE.
-                
-                Regras:
-                - Mantenha um tom técnico, formal e preciso (padrão IEEE/Engenharia de Requisitos).
-                - Retorne APENAS o texto do requisito corrigido, sem explicações ou introduções.
-                
-                TRECHO ORIGINAL:
-                %s
-                
-                ANÁLISE E CORREÇÕES SUGERIDAS:
-                %s
-                """.formatted(chunkOriginal, analiseCorrespondente);
+        Document documento = documentLoader.loadDocument("requisitos.pdf");
 
-            try {
-                String chunkCorrigido = model.chat(promptReescrita);
-                chunksCorrigidos.add(chunkCorrigido);
-                System.out.printf(">>> Chunk %d/%d reescrito com sucesso.%n", (i + 1), chunks.size());
-            } catch (Exception e) {
-                System.err.printf("Erro ao reescrever chunk %d: %s%n", (i + 1), e.getMessage());
-                chunksCorrigidos.add(chunkOriginal);
-            }
-        }
+        // ================================================
+        // Iniciando Pipeline
+        // ================================================
 
-        String documentoCompletoAtualizado = String.join("\n\n", chunksCorrigidos);
+        // -> Cria o pipeline e salva os resultados
+        PipelineResult pipelineResult =
+                new RequirementPipeline(
+                        analyzerAgent,
+                        consolidatorAgent,
+                        rewriterAgent,
+                        translatorAgent,
+                        umlAgent,
+                        patternRetriever
+                )
+                        .execute(documento.toTextSegment());
 
-        System.out.println("\n================ REQUISITOS ATUALIZADOS ================\n");
-        System.out.println(documentoCompletoAtualizado);
+        // ================================================
+        // Gerando Auditáveis
+        // ================================================
 
-        // Agente 3 - Diagrama de classes
+        // -> Salva as condições do pipeline
+        Conditions conditions = new Conditions(
+                textModel.defaultRequestParameters().modelName(),
+                codeModel.defaultRequestParameters().modelName(),
+                embeddingModel.modelName(),
+                translateModel.defaultRequestParameters().modelName(),
+                1000,
+                3,
+                "Rag utilizado nos agentes de analise, reescrita e uml"
+        );
 
-        System.out.println("\nIniciando Etapa 3: Geração do Diagrama PlantUML\n");
-
-        String promptUML = """
-            Você é um arquiteto de software.
-            Com base na especificação completa de requisitos abaixo, gere o código de um Diagrama de Classes UML em formato PlantUML (@startuml ... @enduml).
-            
-            Diretrizes:
-            - Identifique as entidades principais, seus atributos (com tipos) e métodos principais.
-            - Defina os relacionamentos (associação, agregação, composição, herança) e multiplicidades.
-            - Retorne SOMENTE o bloco de código PlantUML.
-            
-            DOCUMENTO DE REQUISITOS COMPLETO:
-            %s
-            """.formatted(documentoCompletoAtualizado);
-
-        String codigoPlantUML = model.chat(promptUML);
-
-        System.out.println("\n================ CÓDIGO PLANTUML ================\n");
-        System.out.println(codigoPlantUML);
+        // -> Salva os arquivos auditáveis de resultados
+        PipelineAudit pipelineAudit = new PipelineAudit("./audits");
+        pipelineAudit.save(conditions, pipelineResult);
     }
 
+    private static EmbeddingModel escolherEmbeddingModel(Scanner scanner) {
+        Embedding[] modelos = Embedding.values();
+
+        if (modelos.length == 0) {
+            throw new IllegalStateException("Nenhum modelo disponível.");
+        }
+
+        while (true) {
+            System.out.println("\nEscolha o modelo de embedding:");
+
+            for (int i = 0; i < modelos.length; i++) {
+                System.out.printf("%d - %s%n", i + 1, modelos[i].name());
+            }
+
+            System.out.print("Digite a opção: ");
+
+            try {
+                int opcao = Integer.parseInt(scanner.nextLine().trim());
+
+                if (opcao >= 1 && opcao <= modelos.length) {
+                    Embedding escolhido = modelos[opcao - 1];
+
+                    System.out.println("Modelo selecionado: " + escolhido);
+                    return EmbeddingFactory.create(escolhido);
+                }
+            } catch (NumberFormatException e) {
+                // A mensagem abaixo também cobre entradas não numéricas.
+            }
+
+            System.out.println("Opção inválida. Escolha um número do menu.");
+        }
+    }
+
+    private static ChatModel escolherTranslateModel(Scanner scanner) {
+        TranslateLLM[] modelos = TranslateLLM.values();
+
+        if (modelos.length == 0) {
+            throw new IllegalStateException("Nenhum modelo disponível.");
+        }
+
+        while (true) {
+            System.out.println("\nEscolha o modelo de tradução:");
+
+            for (int i = 0; i < modelos.length; i++) {
+                System.out.printf("%d - %s%n", i + 1, modelos[i].name());
+            }
+
+            System.out.print("Digite a opção: ");
+
+            try {
+                int opcao = Integer.parseInt(scanner.nextLine().trim());
+
+                if (opcao >= 1 && opcao <= modelos.length) {
+                    TranslateLLM escolhido = modelos[opcao - 1];
+
+                    System.out.println("Modelo selecionado: " + escolhido);
+                    return TranslateLlmFactory.create(escolhido);
+                }
+            } catch (NumberFormatException e) {
+                // A mensagem abaixo também cobre entradas não numéricas.
+            }
+
+            System.out.println("Opção inválida. Escolha um número do menu.");
+        }
+    }
+
+    private static ChatModel escolherLlm(Scanner scanner) {
+        LLM[] modelos = LLM.values();
+
+        if (modelos.length == 0) {
+            throw new IllegalStateException("Nenhum modelo disponível.");
+        }
+
+        while (true) {
+
+            for (int i = 0; i < modelos.length; i++) {
+                System.out.printf("%d - %s%n", i + 1, modelos[i].name());
+            }
+
+            System.out.print("Digite a opção: ");
+
+            try {
+                int opcao = Integer.parseInt(scanner.nextLine().trim());
+
+                if (opcao >= 1 && opcao <= modelos.length) {
+                    LLM escolhido = modelos[opcao - 1];
+
+                    System.out.println("Modelo selecionado: " + escolhido);
+                    return LlmFactory.create(escolhido);
+                }
+            } catch (NumberFormatException e) {
+                // A mensagem abaixo também cobre entradas não numéricas.
+            }
+
+            System.out.println("Opção inválida. Escolha um número do menu.");
+        }
+    }
+
+    private static void ingestInBatches(
+            RAG rag,
+            List<Document> documents
+    ) {
+        final int batchSize = 64;
+
+        for (int start = 0; start < documents.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, documents.size());
+
+            List<Document> batch = documents.subList(start, end);
+
+            rag.ingestor().ingest(batch);
+
+            System.out.printf(
+                    "PlantUCD: documentos %d até %d de %d processados.%n",
+                    start + 1,
+                    end,
+                    documents.size()
+            );
+        }
+    }
 }
